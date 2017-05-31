@@ -17,16 +17,17 @@ from __future__ import absolute_import
 
 # Import python libs
 import logging
+from distutils.version import LooseVersion  # pylint: disable=import-error,no-name-in-module
 import json
 import re
+from bson import json_util, ObjectId
 
 # Import salt libs
-from salt.utils.versions import LooseVersion as _LooseVersion
+from salt.ext.six import string_types
 from salt.exceptions import get_error_message as _get_error_message
 
 
 # Import third party libs
-import salt.ext.six as six
 try:
     import pymongo
     HAS_MONGODB = True
@@ -79,13 +80,230 @@ def _to_dict(objects):
     Potentially interprets a string as JSON for usage with mongo
     """
     try:
-        if isinstance(objects, six.string_types):
+        if isinstance(objects, string_types):
             objects = json.loads(objects)
     except ValueError as err:
         log.error("Could not parse objects: %s", err)
         raise err
 
     return objects
+
+
+def rs_init(name, user=None, password=None, host=None, port=None, members=[]):
+    '''
+    Configure a replica set.
+
+    CLI Example:
+
+    .. code-block:: bash
+
+        salt '*' mongodb.rs_init <name> <user> <password> <host> <port> <members>
+    '''
+    conn = _connect(user, password, host, port)
+    if not conn:
+        return 'Failed to connect to mongo database'
+
+    try:
+        log.info('Init replica set')
+        return conn.admin.command('replSetInitiate', {
+            '_id': str(name),
+            'members': members
+        })
+    except pymongo.errors.PyMongoError as err:
+        log.error(err)
+        return str(err)
+
+
+def rs_conf(user=None, password=None, host=None, port=None):
+    '''
+    Get the replica set config.
+
+    CLI Example:
+
+    .. code-block:: bash
+
+        salt '*' mongodb.rs_conf <user> <password> <host> <port>
+    '''
+    conn = _connect(user, password, host, port)
+    if not conn:
+        return 'Failed to connect to mongo database'
+
+    try:
+        log.info('Get replica set config')
+        return json.loads(json_util.dumps(conn.admin.command('replSetGetConfig')))
+    except pymongo.errors.PyMongoError as err:
+        log.error(err)
+        return str(err)
+
+
+def status(user=None, password=None, host=None, port=None):
+    '''
+    Get the server status.
+
+    CLI Example:
+
+    .. code-block:: bash
+
+        salt '*' mongodb.status <user> <password> <host> <port>
+    '''
+    conn = _connect(user, password, host, port)
+    if not conn:
+        return 'Failed to connect to mongo database'
+
+    try:
+        log.info('Get the server status')
+        return json.loads(json_util.dumps(conn.admin.command('serverStatus')))
+    except pymongo.errors.PyMongoError as err:
+        log.error(err)
+        return str(err)
+
+
+def rs_status(user=None, password=None, host=None, port=None):
+    '''
+    Get the replica set status.
+
+    CLI Example:
+
+    .. code-block:: bash
+
+        salt '*' mongodb.rs_status <user> <password> <host> <port>
+    '''
+    conn = _connect(user, password, host, port)
+    if not conn:
+        return 'Failed to connect to mongo database'
+
+    try:
+        log.info('Get replica set status')
+        return json.loads(json_util.dumps(conn.admin.command('replSetGetStatus')))
+    except pymongo.errors.PyMongoError as err:
+        log.error(err)
+        return str(err)
+
+
+def rs_freez(name, user=None, password=None, host=None, port=None):
+    '''
+     Prevents a replica set member from seeking election for the specified number of seconds.
+
+    CLI Example:
+
+    .. code-block:: bash
+
+        salt '*' mongodb.rs_freez <name> <user> <password> <host> <port>
+    '''
+    conn = _connect(user, password, host, port)
+    if not conn:
+        return 'Failed to connect to mongo database'
+
+    try:
+        log.info('Freez replica set')
+        return conn.admin.command({'replSetFreeze': name})
+    except pymongo.errors.PyMongoError as err:
+        log.error(err)
+        return str(err)
+
+
+def rs_maintenance(name, user=None, password=None, host=None, port=None):
+    '''
+    Enables or disables the maintenance mode for a secondary member of a replica set.
+
+    CLI Example:
+
+    .. code-block:: bash
+
+        salt '*' mongodb.rs_maintenance <name> <user> <password> <host> <port>
+    '''
+    conn = _connect(user, password, host, port)
+    if not conn:
+        return 'Failed to connect to mongo database'
+
+    try:
+        log.info('Switch member to maintenance')
+        return conn.admin.command({'replSetMaintenance': name})
+    except pymongo.errors.PyMongoError as err:
+        log.error(err)
+        return str(err)
+
+
+def rs_reconfigure(name, user=None, password=None, host=None, port=None, force=False, members=[], version=None):
+    '''
+    Reconfigure replica set.
+
+    CLI Example:
+
+    .. code-block:: bash
+
+        salt '*' mongodb.rs_reconfigure <name> <user> <password> <host> <port> <members>
+    '''
+    conn = _connect(user, password, host, port)
+    if not conn:
+        return 'Failed to connect to mongo database'
+
+    try:
+        log.info('Reconfigure replica set')
+        res = json.loads(json_util.dumps(conn.admin.command({
+            'replSetReconfig': {
+                '_id': name,
+                'members': members,
+                'version': version
+            },
+            'force': force
+        })))
+        if isinstance(res, dict):
+            return True
+        else:
+            return res
+    except pymongo.errors.PyMongoError as err:
+        log.error(err)
+        return str(err)
+
+
+def rs_step_down(user=None, password=None, host=None, port=None, step_down=None, secondary_catchup_period_secs=None):
+    '''
+    Forces the primary of the replica set to become a secondary, triggering an election for primary.
+
+    CLI Example:
+
+    .. code-block:: bash
+
+        salt '*' mongodb.rs_step_down <user> <password> <host> <port> <step_down> <secondary_catchup_period_secs>
+    '''
+    conn = _connect(user, password, host, port)
+    if not conn:
+        return 'Failed to connect to mongo database'
+
+    try:
+        log.info('Step down member')
+        return conn.admin.command({
+            'replSetStepDown': step_down,
+            'secondaryCatchUpPeriodSecs': secondary_catchup_period_secs
+        })
+    except pymongo.errors.PyMongoError as err:
+        log.error(err)
+        return str(err)
+
+
+def rs_sync_from(name, user=None, password=None, host=None, port=None):
+    '''
+    Temporarily overrides the default sync target for the current mongod. This operation is useful for testing different patterns and in situations where a set member is not replicating from the desired host.
+
+    CLI Example:
+
+    .. code-block:: bash
+
+        salt '*' mongodb.rs_sync_from <user> <password> <host> <port>
+    '''
+    conn = _connect(user, password, host, port)
+    if not conn:
+        return 'Failed to connect to mongo database'
+
+    try:
+        log.info('Sync member')
+        return conn.admin.command({
+            'replSetSyncFrom': name
+        })
+    except pymongo.errors.PyMongoError as err:
+        log.error(err)
+        return str(err)
 
 
 def db_list(user=None, password=None, host=None, port=None, authdb=None):
@@ -122,7 +340,7 @@ def db_exists(name, user=None, password=None, host=None, port=None, authdb=None)
     '''
     dbs = db_list(user, password, host, port, authdb=authdb)
 
-    if isinstance(dbs, six.string_types):
+    if isinstance(dbs, string_types):
         return False
 
     return name in dbs
@@ -156,67 +374,6 @@ def db_remove(name, user=None, password=None, host=None, port=None, authdb=None)
     return True
 
 
-def _version(mdb):
-    return mdb.command('buildInfo')['version']
-
-
-def version(user=None, password=None, host=None, port=None, database='admin', authdb=None):
-    '''
-    Get MongoDB instance version
-
-    CLI Example:
-
-    .. code-block:: bash
-
-        salt '*' mongodb.version <user> <password> <host> <port> <database>
-    '''
-    conn = _connect(user, password, host, port, authdb=authdb)
-    if not conn:
-        err_msg = "Failed to connect to MongoDB database {0}:{1}".format(host, port)
-        log.error(err_msg)
-        return (False, err_msg)
-
-    try:
-        mdb = pymongo.database.Database(conn, database)
-        return _version(mdb)
-    except pymongo.errors.PyMongoError as err:
-        log.error(
-            'Listing users failed with error: {0}'.format(
-                str(err)
-            )
-        )
-        return str(err)
-
-
-def user_find(name, user=None, password=None, host=None, port=None,
-                database='admin', authdb=None):
-    '''
-    Get single user from MongoDB
-
-    CLI Example:
-
-    .. code-block:: bash
-
-        salt '*' mongodb.user_find <name> <user> <password> <host> <port> <database> <authdb>
-    '''
-    conn = _connect(user, password, host, port, authdb=authdb)
-    if not conn:
-        err_msg = "Failed to connect to MongoDB database {0}:{1}".format(host, port)
-        log.error(err_msg)
-        return (False, err_msg)
-
-    mdb = pymongo.database.Database(conn, database)
-    try:
-        return mdb.command("usersInfo", name)["users"]
-    except pymongo.errors.PyMongoError as err:
-        log.error(
-            'Listing users failed with error: {0}'.format(
-                str(err)
-            )
-        )
-        return (False, str(err))
-
-
 def user_list(user=None, password=None, host=None, port=None, database='admin', authdb=None):
     '''
     List users of a Mongodb database
@@ -236,20 +393,20 @@ def user_list(user=None, password=None, host=None, port=None, database='admin', 
         mdb = pymongo.database.Database(conn, database)
 
         output = []
-        mongodb_version = _version(mdb)
+        mongodb_version = mdb.eval('db.version()')
 
-        if _LooseVersion(mongodb_version) >= _LooseVersion('2.6'):
-            for user in mdb.command('usersInfo')['users']:
-                output.append(
-                    {'user': user['user'],
-                     'roles': user['roles']}
-                )
+        if LooseVersion(mongodb_version) >= LooseVersion('2.6'):
+            for user in mdb.eval('db.getUsers()'):
+                output.append([
+                    ('user', user['user']),
+                    ('roles', user['roles'])
+                ])
         else:
             for user in mdb.system.users.find():
-                output.append(
-                    {'user': user['user'],
-                     'readOnly': user.get('readOnly', 'None')}
-                )
+                output.append([
+                    ('user', user['user']),
+                    ('readOnly', user.get('readOnly', 'None'))
+                ])
         return output
 
     except pymongo.errors.PyMongoError as err:
@@ -274,7 +431,7 @@ def user_exists(name, user=None, password=None, host=None, port=None,
     '''
     users = user_list(user, password, host, port, database, authdb)
 
-    if isinstance(users, six.string_types):
+    if isinstance(users, string_types):
         return 'Failed to connect to mongo database'
 
     for user in users:
@@ -285,7 +442,7 @@ def user_exists(name, user=None, password=None, host=None, port=None,
 
 
 def user_create(name, passwd, user=None, password=None, host=None, port=None,
-                database='admin', authdb=None, roles=None):
+                database='admin', authdb=None):
     '''
     Create a Mongodb user
 
@@ -293,19 +450,16 @@ def user_create(name, passwd, user=None, password=None, host=None, port=None,
 
     .. code-block:: bash
 
-        salt '*' mongodb.user_create <user_name> <user_password> <roles> <user> <password> <host> <port> <database>
+        salt '*' mongodb.user_create <name> <user> <password> <host> <port> <database>
     '''
     conn = _connect(user, password, host, port, authdb=authdb)
     if not conn:
         return 'Failed to connect to mongo database'
 
-    if not roles:
-        roles = []
-
     try:
         log.info('Creating user {0}'.format(name))
         mdb = pymongo.database.Database(conn, database)
-        mdb.add_user(name, passwd, roles=roles)
+        mdb.add_user(name, passwd)
     except pymongo.errors.PyMongoError as err:
         log.error(
             'Creating database {0} failed with error: {1}'.format(
@@ -368,7 +522,7 @@ def user_roles_exists(name, roles, database, user=None, password=None, host=None
 
     users = user_list(user, password, host, port, database, authdb)
 
-    if isinstance(users, six.string_types):
+    if isinstance(users, string_types):
         return 'Failed to connect to mongo database'
 
     for user in users:
@@ -411,7 +565,7 @@ def user_grant_roles(name, roles, database, user=None, password=None, host=None,
     try:
         log.info('Granting roles {0} to user {1}'.format(roles, name))
         mdb = pymongo.database.Database(conn, database)
-        mdb.command("grantRolesToUser", name, roles=roles)
+        mdb.eval("db.grantRolesToUser('{0}', {1})".format(name, roles))
     except pymongo.errors.PyMongoError as err:
         log.error(
             'Granting roles {0} to user {1} failed with error: {2}'.format(
@@ -450,7 +604,7 @@ def user_revoke_roles(name, roles, database, user=None, password=None, host=None
     try:
         log.info('Revoking roles {0} from user {1}'.format(roles, name))
         mdb = pymongo.database.Database(conn, database)
-        mdb.command("revokeRolesFromUser", name, roles=roles)
+        mdb.eval("db.revokeRolesFromUser('{0}', {1})".format(name, roles))
     except pymongo.errors.PyMongoError as err:
         log.error(
             'Revoking roles {0} from user {1} failed with error: {2}'.format(
@@ -517,7 +671,7 @@ def update_one(objects, collection, user=None, password=None, host=None, port=No
 
     if len(objs) is not 2:
         return "Your request does not contain a valid " + \
-        "'{_\"id\": \"my_id\"} {\"my_doc\": \"my_val\"}'"
+               "'{_\"id\": \"my_id\"} {\"my_doc\": \"my_val\"}'"
 
     objs[0] = objs[0] + '}'
     objs[1] = '{' + objs[1]
@@ -624,3 +778,4 @@ def remove(collection, query=None, user=None, password=None,
     except pymongo.errors.PyMongoError as err:
         log.error("Removing objects failed with error: %s", _get_error_message(err))
         return _get_error_message(err)
+
